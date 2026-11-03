@@ -1,0 +1,332 @@
+\documentclass[11pt]{article}
+
+% ---------------- Packages ----------------
+\usepackage[letterpaper,margin=0.75in,headsep=10pt,footskip=22pt]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{caption}
+\usepackage{fancyhdr}
+\usepackage{xurl}
+\usepackage[hidelinks]{hyperref}
+\usepackage{titlesec}
+\usepackage{float}
+\usepackage{multicol}
+\usepackage{xltabular}
+\setlength{\LTpre}{2pt}\setlength{\LTpost}{2pt}
+\titlespacing*{\section}{0pt}{0.7em}{0.25em}
+\titlespacing*{\subsection}{0pt}{0.45em}{0.1em}
+\setlength{\textfloatsep}{6pt}\setlength{\intextsep}{4pt}
+\titleformat*{\section}{\large\bfseries}
+\titleformat*{\subsection}{\normalsize\bfseries}
+
+\setlist{nosep, leftmargin=*}
+\setlength{\parskip}{0.2em}
+\setlength{\parindent}{0pt}
+\captionsetup{font=small,skip=3pt}
+\newcolumntype{L}{>{\raggedright\arraybackslash}X}
+\newcolumntype{P}[1]{>{\raggedright\arraybackslash}p{#1}}
+\renewcommand{\arraystretch}{1.05}
+
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{CSCI 5360 -- Web Technologies}
+\rhead{Fall 2026}
+\cfoot{\thepage}
+
+
+\newcommand{\diagram}[2]{%
+  \IfFileExists{#1}{\includegraphics[width=#2\linewidth]{#1}}{%
+    \fbox{\parbox[c][4.2cm][c]{#2\linewidth}{\centering\small Insert \detokenize{#1} here}}}}
+
+\begin{document}
+
+% ---------------- Title block ----------------
+\vspace*{-1.2em}
+\begin{center}
+  {\large\bfseries Project Midterm Deliverable}\\[0.2em]
+  {\Large\bfseries Campus Marketplace with Intelligent Search and Personalized Recommendations}\\[0.3em]
+  \textbf{Student:} Pooja Bhusare \quad
+  \textbf{Track:} Red track \quad
+  \textbf{Due:} October 20, 2026
+\end{center}
+
+% =====================================================================
+\section{Assigned Project and Scope}
+The project is a campus marketplace where SLU students can buy and sell items such as textbooks,
+electronics, and furniture. Sellers can create listings with an AI-generated description, and buyers
+can search for items and get personalized recommendations. The two main course topics covered
+are server-side Web APIs with databases (FastAPI, MySQL, JWT) and keeping inventory correct
+when two buyers try to reserve the same item at the same time.
+
+\textbf{Exclusions:} real payment processing, mobile app, seller analytics.
+
+{\small
+\begin{xltabular}{\linewidth}{@{}P{2.6cm}P{1.9cm}LP{2.6cm}@{}}
+\toprule
+\textbf{Feature} & \textbf{Label} & \textbf{Completion criterion} & \textbf{Exclusion} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Feature} & \textbf{Label} & \textbf{Completion criterion} & \textbf{Exclusion} \\
+\midrule
+\endhead
+User auth \& profiles & Essential & Register as buyer or seller, log in, get JWT; expired token $\rightarrow$ 401; duplicate email $\rightarrow$ 409. & OAuth/SSO. \\
+Listings \& inventory & Essential & Seller creates/edits/deletes own listing; two simultaneous requests for the last unit $\rightarrow$ one 201 and one 409. & Bulk CSV; image CDN. \\
+Reservation \& checkout & Essential & Buyer reserves item; checkout confirms reservation; double or expired checkout $\rightarrow$ 409. & Real payments; order history. \\
+Search \& ranking & Ambitious & 95\% of searches finish in under 300\,ms on a dataset of 500 listings; results ranked by relevance, recency, and price. & Spell correction. \\
+Recommendations & Ambitious & Returns 5 items based on what the user has viewed; quality compared against 5 random items and reported (E2). & Collaborative filtering. \\
+AI description generator & Ambitious & Draft description returned within 3\,s; if the AI service fails, a default text is shown instead; tested with a simulated failure. & Auto re-generation. \\
+Redis caching & If Time Permits & Frequently viewed search results are cached; response time compared with and without caching. & Advanced cache invalidation. \\
+\bottomrule
+\end{xltabular}}
+
+
+% =====================================================================
+\section{Software Implementation Plan}
+{\small
+\begin{xltabular}{\linewidth}{@{}P{2.75cm}P{3.0cm}LP{2.3cm}@{}}
+\toprule
+\textbf{Module} & \textbf{I/O} & \textbf{Logic} & \textbf{Reused deps.} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Module} & \textbf{I/O} & \textbf{Logic} & \textbf{Reused deps.} \\
+\midrule
+\endhead
+Auth & In: email, password, name, role. Out: JWT or error. &
+Check email not already used; store bcrypt-hashed password and role (buyer or seller); return an access token; block requests with a missing or expired token. & FastAPI, MySQL. \\
+Listing \& AI description & In: product details, or title, category, and condition. Out: listing ID or draft description. &
+Check required fields; block duplicate listings; send title/category to the LLM and return the draft; return a default text if the LLM fails or exceeds 3\,s. & FastAPI, LLM API. \\
+Reservation \& checkout & In: listing ID or reservation ID. Out: reservation or confirmation. &
+Reserve only if the item is still available, using the version check (Section~6) so that only one of two simultaneous requests succeeds. Checkout confirms a pending reservation and rejects one that is already confirmed or expired. A background job runs every minute, cancels pending reservations past \texttt{expires\_at} (15 minutes), and returns each unit to stock in the same transaction. & MySQL. \\
+Search \& ranking & In: keyword + filters. Out: ranked page of listings. &
+Search with MySQL full-text; score each result by text match, recency, and closeness to prices the user has viewed; hide sold-out items. & MySQL. \\
+Recommendations & In: user ID. Out: 5 listing IDs. &
+Collect the user's viewed listings; find other active listings with similar titles and descriptions (TF-IDF cosine similarity); return the top 5. & scikit-learn, MySQL. \\
+React frontend & In: user actions. Out: rendered UI. &
+Protect pages that need login; show search results with filters; show recommended items on the product page; update the UI immediately after a reservation. & React. \\
+\bottomrule
+\end{xltabular}}
+
+
+% =====================================================================
+\section{Architecture and Technology Decisions}
+\begin{figure}[H]
+  \centering
+  \diagram{architech.jpeg}{0.6}
+  \caption{System architecture. The React frontend runs in the user's browser and calls the FastAPI backend over HTTPS (REST/JSON with a JWT). All backend modules run in one FastAPI application, which reads and writes MySQL over SQL, calls the external LLM API over HTTPS, and uses Redis for cache lookups only if time permits (dashed).}
+\end{figure}
+
+\textbf{Tracing a reservation.} When a buyer clicks \emph{Reserve}, the browser sends
+\texttt{POST /reservations} with the listing ID and JWT. FastAPI verifies the token, reads the
+listing's quantity and version, and runs one conditional update that decrements quantity and
+increments version only if the version is unchanged. If the update affects one row, the API inserts a
+pending reservation with \texttt{expires\_at} set 15 minutes ahead and returns 201; if it affects zero
+rows, another buyer won the race and the API returns 409. The React page then shows the
+reservation or a ``no longer available'' message.
+
+\begin{figure}[H]
+  \centering
+  \diagram{datamodel.jpeg}{0.6}
+  \caption{Data model. Arrows show one-to-many relationships: a user sells many listings and makes many reservations, a category contains many listings, and each listing can have many reservations. \texttt{Users\_views} and \texttt{Users\_saves} record which listings a user viewed or saved; they are the input to the recommendation module. \texttt{Listing.version} is the integer used by the reservation update to detect conflicting requests, and a unique constraint on (buyer, listing) prevents a buyer from reserving the same listing twice.}
+\end{figure}
+
+\textbf{Technology choices.} React 18~[3] fits a marketplace UI built from reusable product cards,
+filters, and live reservation updates. FastAPI~[1] validates every request with Pydantic models
+(price, category, token), generates OpenAPI documentation used for API testing, and supports
+asynchronous calls, so a slow LLM request does not block other users. MySQL~8~[5] provides
+built-in FULLTEXT search~[6], which avoids running a separate search service, and transactional
+conditional updates for the version-based inventory check. JWT tokens keep authentication
+stateless~[4]. The AI description feature calls the OpenAI API~[8]; it needs an API key kept in an
+environment variable and has a small per-request cost, which the fallback text limits. Redis would be
+added only if time allows, to cache search results.
+
+% =====================================================================
+\section{Track-Specific Design (Red Track)}
+\subsection*{User Stories}
+\begin{description}[leftmargin=1.2em, style=nextline, itemsep=1pt, topsep=0pt]
+  \item[US-1 Search and filter.] As a buyer, I want to search by keyword and filter by category and price so I only see relevant items.\\
+  \emph{Acceptance criterion:} Searching ``calculus'' with \texttt{category=Textbooks} returns only active matching listings sorted by score; sold-out items do not appear.
+  \item[US-2 Reserve an item.] As a buyer, I want to reserve an item so it is held for me.\\
+  \emph{Acceptance criterion:} If two buyers reserve the last unit at the same time, exactly one gets HTTP 201 and the other gets HTTP 409; quantity is 0 after both requests complete.
+  \item[US-3 Create a listing with AI description.] As a seller, I want an AI-generated description for my listing so I can write it faster.\\
+  \emph{Acceptance criterion:} \texttt{POST /listings/describe} returns a draft within 3\,s; if the LLM is down, a fallback template is returned instead of an error.
+\end{description}
+
+\subsection*{Interface}
+Figure~\ref{fig:wire} shows the search page, the starting point of the central buyer workflow:
+search, filter, open a listing, and reserve it.
+
+\begin{figure}[H]
+  \centering
+  \diagram{wiredDiag.jpeg}{0.55}
+  \caption{Wireframe of the search page: keyword box, category and price filters, ranked result cards with a View button, and a ``Recommended for you'' row.}
+  \label{fig:wire}
+\end{figure}
+
+\subsection*{API Design}
+{\small
+\begin{xltabular}{\linewidth}{@{}P{1.1cm}P{4.3cm}P{3.6cm}L@{}}
+\toprule
+\textbf{Method} & \textbf{Endpoint / input} & \textbf{Success} & \textbf{Errors} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Method} & \textbf{Endpoint / input} & \textbf{Success} & \textbf{Errors} \\
+\midrule
+\endhead
+POST & \texttt{/auth/register} \{email, password, name, role\} & 201 \{user\_id\} & 409 duplicate email; 422 bad input. \\
+POST & \texttt{/auth/token} \{email, password\} & 200 \{access\_token\} & 401 wrong credentials; 422 bad input. \\
+POST & \texttt{/listings/describe} \{title, category, condition\} & 200 \{description\} within 3\,s; fallback on LLM failure. & 422 missing fields; 403 non-seller. \\
+POST & \texttt{/reservations} \{listing\_id\} & 201 \{reservation\_id, status: ``pending''\} & 409 sold out or already taken; 401. \\
+GET & \texttt{/listings/search} \texttt{?q=\&category=} \texttt{\&min\_price=\&max\_price=} & 200 \{items, next\_cursor\} ranked by score; \{items: []\} if none. & 422 invalid input. \\
+POST & \texttt{/checkout/}\newline\texttt{\{reservation\_id\}} & 200 \{status: ``confirmed''\} & 409 already confirmed or expired; 403 not owner. \\
+\bottomrule
+\end{xltabular}}
+
+
+\subsection*{Data and Safeguards}
+All inputs are validated by Pydantic (price $>$ 0, category from an allowed list, valid JWT);
+invalid input returns 422. Seller routes check that the user's role is seller, and buyers can confirm
+only their own reservations. Passwords are stored as bcrypt hashes, and the JWT signing key and
+LLM API key are kept in environment variables, never in the repository. If the LLM API times out
+or returns an error, the description endpoint catches the exception and returns a plain fallback string
+so the seller's flow is not blocked.
+
+\subsection*{Technical Depth}
+\textbf{Search ranking.} Search goes beyond a simple keyword match. Each result is scored on three
+things: how well the listing text matches the query (MySQL full-text relevance~[6]), how recently the
+listing was posted, and how close its price is to the prices the user has viewed before. The three
+scores are combined and results are sorted from highest to lowest.
+
+\textbf{Recommendations.} When a user views a listing, it is saved to their view history. The
+recommendation engine represents listing titles and descriptions as TF-IDF vectors~[2], compares the
+user's viewed listings with all other active listings by cosine similarity, and returns the 5 most
+similar ones.
+
+% =====================================================================
+\section{Testing and Evaluation Plan}
+\subsection*{Correctness Tests}
+{\small
+\begin{xltabular}{\linewidth}{@{}P{0.6cm}P{2.4cm}P{4.6cm}LP{1.7cm}@{}}
+\toprule
+\textbf{ID} & \textbf{Component} & \textbf{Input} & \textbf{Expected} & \textbf{Mode} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{ID} & \textbf{Component} & \textbf{Input} & \textbf{Expected} & \textbf{Mode} \\
+\midrule
+\endhead
+T1 & Reservation (concurrent) & Two simultaneous \texttt{POST /reservations} for the last unit. & One 201, one 409; DB quantity = 0. & Automated. \\
+T2 & Checkout & \texttt{POST /checkout/\{id\}} on a pending reservation. & 200; DB status = confirmed. & Automated. \\
+T3 & AI description & Mock LLM timeout; call \texttt{POST /listings/describe}. & 200 with fallback text; no 500. & Automated. \\
+T4 & Search & \texttt{GET /listings/search?min\_price=-5}. & 422 with error detail. & Automated. \\
+T5 & Auth & \texttt{POST /reservations} with no token, then with an expired token. & 401 for both. & Automated. \\
+T6 & Auth & \texttt{POST /auth/register} twice with the same email. & First 201, second 409. & Automated. \\
+\bottomrule
+\end{xltabular}}
+
+
+\subsection*{Evaluation Metrics}
+\textbf{E1 -- Search latency:} Send 200 search requests, 50 at a time, against 500 listings.
+Target: the 95th percentile is under 300\,ms. Repeat 5 times and report the median of the five runs.
+
+\textbf{E2 -- Recommendation quality:} Create 20 test users who each like one topic and have
+viewed a few items in it. Count how many of each user's top 5 recommendations match their topic,
+and compare with 5 random items. Target: on average at least 1.5 of 5 match (30\%), clearly above
+random, whose expected match rate equals the share of seed listings in the user's topic (reported
+alongside the result). The real result is reported even if the target is missed.
+
+\textbf{E3 -- No oversell:} 5 buyers try to reserve each of 10 listings (quantity = 1 each) at the same
+time. Target: every item is reserved at most once.
+
+\textbf{Reproducibility:} All tests run in Docker Compose. A SQL file pre-loads fixed test data, and
+results are saved to \texttt{/eval/results/}.
+
+% =====================================================================
+\section{Critical Design Decision}
+\subsection*{How to Handle Two Buyers Reserving the Same Item}
+\begin{itemize}
+  \item \textbf{Version-based check (chosen):} the reservation update includes a check on the item's
+  version number. If another buyer reserved it first, the version has changed, the update affects no
+  rows, and the second request gets a 409. No waiting is needed.
+  \item \textbf{Row lock:} lock the database row before reading (\texttt{SELECT \ldots{} FOR UPDATE}~[7]),
+  then update. Other requests wait in line until the lock is released.
+\end{itemize}
+
+\textbf{Choice: version-based check.} For a campus marketplace, most items have only a few buyers
+trying at the same time. The version-based approach has less overhead: requests never wait on a lock
+or hold a database connection while waiting, and a conflict is reported immediately as a 409. Test T1
+and metric E3 directly verify this behavior.
+
+\textbf{Tradeoff.} If a very popular item gets many requests at once, the version check rejects many
+of them and users see many errors. This also happens when quantity is greater than 1: two buyers
+who could both be served may still conflict on the version, so the loser must retry. A row lock would
+be better in that case.
+
+\textbf{When I would switch:} if load testing shows more than 20\% of requests for a popular listing
+failing, I would switch that endpoint to a row lock.
+
+\textbf{AI note:} Claude suggested a row lock as the default. After comparing MySQL's locking
+reads~[7] with a version check for this workload, I chose the version-based approach because it
+never makes requests wait. A suggestion to use Redis as the primary inventory store was also
+rejected, since it would split inventory across two data stores.
+
+% =====================================================================
+\section{Project Schedule, Risks, and Development Practices}
+\subsection*{Milestones}
+\begin{itemize}
+  \item \textbf{Oct 21 -- Nov 3:} Set up the FastAPI project, MySQL schema, JWT auth, and React
+  skeleton with login page. \emph{Done when:} T5 and T6 pass and the app starts with Docker Compose.
+  \item \textbf{Nov 4 -- Nov 17:} Build listing CRUD, reservation with the version-based inventory
+  check and expiry job, checkout, AI description with fallback, and ranked search.
+  \emph{Done when:} T1--T4 pass and search returns ranked results on 50 seed listings.
+  \item \textbf{Nov 18 -- Dec 1:} Add content-based recommendations, finish all tests, run E1 and E3.
+  \emph{Done when:} E3 oversell = 0 and E1 latency is recorded.
+  \item \textbf{Dec 2 -- Dec 10:} Run E2, write the report, clean up the repository and add a README;
+  add Redis if time allows. \emph{Done when:} E2 results are saved in \texttt{/eval/results/}, a clean
+  Docker Compose run reproduces all results, and the PDF and repository are submitted.
+\end{itemize}
+
+\subsection*{Risks}
+\textbf{Risk 1 -- Too many 409s under load:} if many users try to reserve a popular item at once,
+the version check may reject many requests. \emph{Fallback:} add a short automatic retry on the
+client side; if the failure rate exceeds 20\% in testing, switch to a row lock.
+
+\textbf{Risk 2 -- Recommendations not better than random:} TF-IDF similarity may not beat a
+random list on a small dataset. \emph{Fallback:} add a simple category-match boost and report both
+results.
+
+\subsection*{AI Usage Disclosure}
+I used Claude (Anthropic) to help prepare this document. It helped me organize the sections to
+match the assignment, review my technology choices, compare approaches for content-based
+recommendations, and draft and revise LaTeX tables and text. I wrote or approved all technical
+decisions and can explain them.
+
+\textbf{Suggestion I checked and corrected:} Claude suggested a citation for optimistic concurrency
+that did not support my claim, so I replaced it with a source I checked myself.
+
+\textbf{Planned agent task:} during development, I will ask Claude to draft the
+\texttt{POST /reservations} endpoint with the version-based update, given my schema and the API
+contract above. I will verify it by reviewing the SQL to confirm the version check and quantity
+decrement happen in one statement, running T1 and E3 myself, and rewriting any part I cannot
+explain.
+
+% =====================================================================
+\begin{multicols}{2}\footnotesize
+\begin{thebibliography}{9}\setlength{\itemsep}{1pt}
+\bibitem{fastapi} FastAPI Documentation. \url{https://fastapi.tiangolo.com}.
+\bibitem{tfidf} scikit-learn. TfidfVectorizer Documentation. \url{https://scikit-learn.org/stable/modules/generated/sklearn.feature_extraction.text.TfidfVectorizer.html}.
+\bibitem{react} React Documentation. \url{https://react.dev}.
+\bibitem{auth0} Auth0. Validate JSON Web Tokens. \url{https://auth0.com/docs/secure/tokens/json-web-tokens/validate-json-web-tokens}.
+
+\bibitem{MYSQL}  MYSQL documentation and reference guide. \url{https://www.w3schools.com/mysql/default.asp}.
+
+\bibitem{openai} OpenAI. Text Generation Guide. \url{https://developers.openai.com/api/docs/guides/text?lang=python}.
+\end{thebibliography}
+\end{multicols}
+
+\end{document}
